@@ -1,0 +1,79 @@
+name: build-and-release
+
+# 依赖迁移版本升级流水线：
+# 推送/PR 跑全量校验；打 tag 触发构建镜像并部署，部署失败按上一版本自动回滚。
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  backend-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 安装依赖
+        working-directory: backend
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          pip install -r requirements.txt
+      - name: 迁移链路单元测试
+        working-directory: backend
+        run: . .venv/bin/activate && python -m unittest discover -s tests -v
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: 安装依赖
+        working-directory: frontend
+        run: npm ci
+      - name: 类型检查与构建
+        working-directory: frontend
+        run: npm run build
+
+  image-build:
+    needs: [backend-test, frontend-build]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        component: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - name: 构建镜像
+        run: docker build -t data-platform/${{ matrix.component }}:${GITHUB_REF_NAME} ./${{ matrix.component }}
+      - name: 推送镜像
+        run: |
+          echo "${{ secrets.REGISTRY_TOKEN }}" | docker login -u "${{ secrets.REGISTRY_USER }}" --password-stdin
+          docker push data-platform/${{ matrix.component }}:${GITHUB_REF_NAME}
+
+  deploy:
+    needs: [image-build]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: 部署新版本（失败自动回滚上一版）
+        run: |
+          set -euo pipefail
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          echo "部署 ${GITHUB_REF_NAME}，上一版本 ${PREVIOUS_TAG:-无}"
+          if ! ./scripts/deploy.sh "${GITHUB_REF_NAME}"; then
+            echo "部署失败，触发回滚到 ${PREVIOUS_TAG}"
+            ./scripts/rollback.sh "${PREVIOUS_TAG}"
+            exit 1
+          fi
+      - name: 推进迁移关系版本（清单/拓扑升级，旧快照保留）
+        run: ./scripts/upgrade_relation_schema.sh

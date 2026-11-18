@@ -5,6 +5,11 @@ services:
       - "8000:8000"
     environment:
       - APP_ENV=local
+      # 迁移清单/拓扑落盘路径：容器内固定目录，通过命名卷持久化，升级与回滚都可回查
+      - MIGRATION_DB_PATH=/srv/data/migration.db
+      - RELATION_SCHEMA_VERSION=2
+    volumes:
+      - migration_data:/srv/data
   frontend:
     build: ./frontend
     ports:
@@ -14,3 +19,6 @@ services:
       VITE_PROXY_TARGET: http://backend:8000
     depends_on:
       - backend
+
+volumes:
+  migration_data:

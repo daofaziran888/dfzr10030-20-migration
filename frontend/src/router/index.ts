@@ -16,6 +16,7 @@ const LogViewer = () => import('@/views/log_viewer/index.vue')
 const Auth = () => import('@/views/auth/index.vue')
 const Transform = () => import('@/views/transform/index.vue')
 const Flow = () => import('@/views/flow/index.vue')
+const Migration = () => import('@/views/migration/index.vue')
 const Lineage = () => import('@/views/lineage/index.vue')
 const Report = () => import('@/views/report/index.vue')
 
@@ -38,6 +39,7 @@ const router = createRouter({
     { path: '/auth', name: 'auth', component: Auth },
     { path: '/transform', name: 'transform', component: Transform },
     { path: '/flow', name: 'flow', component: Flow },
+    { path: '/migration', name: 'migration', component: Migration },
     { path: '/lineage', name: 'lineage', component: Lineage },
     { path: '/report', name: 'report', component: Report },
   ],

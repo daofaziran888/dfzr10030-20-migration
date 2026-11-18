@@ -24,6 +24,13 @@
       <dl><dt>编号</dt><dd>{{ selectedNode.id }}</dd></dl>
       <dl><dt>名称</dt><dd>{{ selectedNode.name || selectedNode.label }}</dd></dl>
       <dl v-for="f in detailFields" :key="f"><dt>{{ f }}</dt><dd>{{ selectedNode[f] ?? '—' }}</dd></dl>
+      <dl v-if="selectedNode['依赖文本']"><dt>原依赖文本</dt><dd data-testid="legacy-text">{{ selectedNode['依赖文本'] }}</dd></dl>
+      <dl v-if="selectedNode.migration && selectedNode.migration.job_id">
+        <dt>迁移状态</dt>
+        <dd data-testid="migration-state">
+          {{ migrationStatusText(selectedNode.migration) }}
+        </dd>
+      </dl>
       <div style="grid-column:1/-1; margin-top:8px; display:flex; gap:6px;">
         <button v-for="action in actions" :key="action" class="btn" :data-testid="`action-${selectedNode.id}-${action}`" @click="runAction(action, selectedNode)">{{ action }}</button>
       </div>
@@ -49,6 +56,13 @@ const actions = ["提交校验", "启用管道", "停用管道"]
 const statuses = ["草稿", "待校验", "已启用", "已停用"]
 const STATUS_COLORS: Record<string,string> = { '草稿':'#e2e8f0','待校验':'#fef3c7','已启用':'#d1fae5','已停用':'#fee2e2' }
 const nodeColor = (s: string) => STATUS_COLORS[s] || '#e2e8f0'
+const MODE_TEXT: Record<string,string> = { legacy: '旧文本', shadow: '影子读取', relation: '节点关系' }
+const STATUS_TEXT: Record<string,string> = { created: '已创建', analyzed: '已解析', frozen: '已冻结', conflict: '有冲突', ready: '待切换', cutover: '已切换', rolled_back: '已回滚' }
+function migrationStatusText(m: Record<string, any>) {
+  const read = MODE_TEXT[m.read_mode] || m.read_mode
+  const edit = m.edit_source === 'relation' ? '节点关系（旧文本入口已停用）' : '旧文本'
+  return `${STATUS_TEXT[m.job_status] || m.job_status} · 读取：${read} · 可编辑来源：${edit}`
+}
 const graph = reactive<{nodes: any[], edges: any[]}>({ nodes: [], edges: [] })
 const nodePos = ref<Record<number,{x:number;y:number}>>({})
 const selectedNode = ref<any>(null)

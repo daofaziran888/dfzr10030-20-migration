@@ -1,4 +1,10 @@
-"""采集转换管道 DAG 图服务：生成节点、边示例结构与流转规则。"""
+"""采集转换管道 DAG 图服务：生成节点、边示例结构与流转规则。
+
+迁移链路协作：
+- 转换管道服务读取兼容流转拓扑，按迁移关系清单选择节点表达式；
+- 回写迁移关系清单与兼容流转拓扑（持久化由 migration 仓库承担），并生成待复核清单；
+- 读取同一份清单与拓扑（指纹一致）后才生成流转管道记录。
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -17,6 +23,11 @@ def csv_cell(value: Any) -> str:
     if text and text[0] in "=+-@":
         text = "'" + text
     return '"' + text.replace('"', '""') + '"'
+
+
+def _migration_service():
+    from app.migration.service import migration_service
+    return migration_service
 
 
 class TransformService:
@@ -62,3 +73,32 @@ class TransformService:
     def raw_data(self) -> tuple[list[dict], list[dict]]:
         g = self.get_graph()
         return g["nodes"], g["edges"]
+
+    # ---- 迁移链路：读取同一份清单+拓扑，选择节点表达式 ------------------
+    def read_migration_artifacts(self, job_id: str) -> dict[str, Any]:
+        svc = _migration_service()
+        detail = svc.get_detail(job_id)
+        manifest = detail.get("manifest")
+        topology = detail.get("topology")
+        if manifest is None or topology is None:
+            raise ValueError("迁移关系清单或兼容流转拓扑尚未持久化")
+        if topology["payload"]["manifest_fingerprint"] != manifest["fingerprint"]:
+            raise ValueError("清单与拓扑指纹不一致，转换管道拒绝读取")
+        # 读取兼容流转拓扑，按迁移关系清单选择节点表达式
+        expressions = svc._select_expressions(manifest["payload"])
+        return {"manifest": manifest, "topology": topology, "expressions": expressions}
+
+    def writeback_artifacts(self, job_id: str, expected_version: int,
+                            producer: str = "transform-pipeline") -> dict[str, Any]:
+        """转换管道服务同步回写迁移关系清单及兼容流转拓扑并生成待复核清单。"""
+        svc = _migration_service()
+        result = svc.publish_artifacts(job_id, expected_version, producer=producer, actor=producer)
+        pending = svc.pending_review(job_id)
+        return {"manifest": result["manifest"], "topology": result["topology"],
+                "pending_review": pending, "job": result["job"]}
+
+    def generate_flow_record(self, job_id: str) -> dict[str, Any]:
+        """读取同一份迁移关系清单及兼容流转拓扑后才生成流转管道记录。"""
+        # 先读取并校验同一份依据
+        self.read_migration_artifacts(job_id)
+        return _migration_service().generate_pipeline_record(job_id)

@@ -8,14 +8,19 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from app.schemas import ActionPayload, ActionResult, EntryPayload, PageResult
-from app.services.flow import FlowService
+from app.services.flow import FlowService, LegacyEditDenied
 
 router = APIRouter(prefix="/api/flow", tags=["数据流转编排"])
 service = FlowService()
 LIST_FIELDS = ["管道编号", "管道名称", "起始节点", "终止节点", "中间节点", "流转条件", "并行数量", "管道状态"]
 STATUSES = ["草稿", "待校验", "已启用", "已停用"]
+
+
+class LegacyTextPayload(BaseModel):
+    text: str
 
 
 def csv_cell(value: Any) -> str:
@@ -51,6 +56,18 @@ def get_entry(entry_id: int) -> dict:
     if entry is None:
         raise HTTPException(status_code=404, detail=f"流转管道 {entry_id} 不存在")
     return entry
+
+
+@router.put("/{entry_id}/legacy-text")
+def update_legacy_text(entry_id: int, payload: LegacyTextPayload) -> ActionResult:
+    """自由文本依赖的唯一编辑入口；迁移冻结/切换后返回 409，保证只有一个可编辑来源。"""
+    try:
+        entry = service.update_legacy_text(entry_id, payload.text)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"流转管道 {entry_id} 不存在")
+    except LegacyEditDenied as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return ActionResult(ok=True, message="自由文本依赖已更新", entry=entry)
 
 
 @router.post("")
